@@ -235,15 +235,7 @@ namespace LeiKaiFeng.Http
             });
         }
 
-        static void ChuckChunkedEnd(MemoryStream stream)
-        {
-            byte[] buffer = stream.GetBuffer();
-
-            if (!Pf.EndWith(buffer, checked((int)stream.Position), s_mark))
-            {
-                throw new MHttpStreamException("Chunked数据的结尾标记错误");
-            }
-        }
+        
 
         bool FindHeaders(out ArraySegment<byte> buffer)
         {
@@ -544,58 +536,4 @@ namespace LeiKaiFeng.Http
         
 
     }
-
-
-
-    static class Pf
-    {
-
-        public static bool EndWith(byte[] x, int offset, byte[] y)
-        {
-
-            for (int xi = offset - 1, yi = y.Length - 1; xi >= 0 && yi >= 0; xi--, yi--)
-            {
-                if (y[yi] != x[xi])
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        static bool FirstIndex_SubFind(byte[] x, int index, byte[] y)
-        {
-            for (int i = 0; i < y.Length; i++)
-            {
-                if (x[index + i] != y[i])
-                {
-                    return false;
-                }
-            }
-
-            return true;
-        }
-
-        public static int FirstIndex(byte[] x, int offset, int size, byte[] y)
-        {
-            int end_index = (size - y.Length) + 1;
-
-            for (int index = 0; index < end_index; index++)
-            {
-                int n = offset + index;
-
-                if (FirstIndex_SubFind(x, n, y))
-                {
-                    return n;
-                }
-            }
-
-            return -1;
-
-
-        }
-
-    }
-
 }
