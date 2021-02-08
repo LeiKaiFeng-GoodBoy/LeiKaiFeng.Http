@@ -62,17 +62,119 @@ namespace LeiKaiFeng.Http
             }
         }
 
+        sealed class Pack
+        {
+            readonly object m_lock = new object();
+
+            
+            int m_refCount = 1;
+
+            int m_is_close = 0;
+
+            MHttpStream m_stream;
+
+
+            public Pack(MHttpStream stream)
+            {
+                m_stream = stream;
+            }
+
+
+            public void Add()
+            {
+                bool isThrow = false;
+
+
+                lock (m_lock)
+                {
+                    if (m_refCount == 0)
+                    {
+                        isThrow = true;
+                    }
+                    else
+                    {
+                        m_refCount++;
+
+                        isThrow = false;
+                    }
+                }
+
+                if (isThrow)
+                {
+                    throw new ObjectDisposedException(nameof(MHttpStream));
+                }
+            }
+
+            public void Sub()
+            {
+                bool b;
+
+                lock (m_lock)
+                {
+                    if (m_refCount == 0)
+                    {
+                        b = false;
+                    }
+                    else
+                    {
+                        m_refCount--;
+
+                        if (m_refCount == 0)
+                        {
+                            b = true;
+                        }
+                        else
+                        {
+                            b = false;
+                        }
+                    }
+                }
+
+                if (b)
+                {
+                    m_stream.Close();
+                }
+            }
+
+            public void Close()
+            {
+                if (Interlocked.Exchange(ref m_is_close, 1) == 0)
+                {
+                    Sub();
+                }
+            }
+
+            public Task WriteAsync(Func<MHttpStream, Task> func)
+            {
+                return func(m_stream);
+            }
+
+
+            public Task<MHttpResponse> ReadAsync(int maxResponseSize)
+            {
+                return MHttpResponse.ReadAsync(m_stream, maxResponseSize);
+            }
+
+            public void Cancel()
+            {
+                m_stream.Cencel();
+            }
+
+
+
+        }
+
         readonly ChannelReader<ResponsePack> m_channelReader;
 
         readonly ChannelWriter<ResponsePack> m_channelWriter;
 
-        readonly MHttpStream m_stream;
+        readonly Pack m_pack;
 
         int m_count;
 
         public MHttpStreamPack(MHttpStream stream, int maxRequestCount)
         {
-            m_stream = stream;
+            m_pack = new Pack(stream);
 
             var channel = Channel.CreateBounded<ResponsePack>(maxRequestCount);
 
@@ -96,13 +198,29 @@ namespace LeiKaiFeng.Http
             {
                 try
                 {
-                    await sendRequestFunc(m_stream).ConfigureAwait(false);
+                    try
+                    {
+                        m_pack.Add();
 
+                        await m_pack.WriteAsync(sendRequestFunc).ConfigureAwait(false);
+
+                    }
+                    finally
+                    {
+                        m_pack.Sub();
+                    }
+
+                   
                     await m_channelWriter.WriteAsync(taskPack).ConfigureAwait(false);
 
                     ReadResponse();
 
-                    setPoolFunc(this);
+
+
+                    if (setPoolFunc(this) == false)
+                    {
+                        m_pack.Close();
+                    }
                 }
                 catch(Exception e)
                 {
@@ -116,7 +234,10 @@ namespace LeiKaiFeng.Http
             return taskPack.Task;
         }
 
-
+        public void Close()
+        {
+            m_pack.Close();
+        }
 
         void ReadResponse()
         {
@@ -142,14 +263,27 @@ namespace LeiKaiFeng.Http
                 {
 
                     
-                    MHttpClient.LinkedTimeOutAndCancel(taskPack.TimeSpan, taskPack.Token, m_stream.Cencel, out var token, out var closeAction);
+                    MHttpClient.LinkedTimeOutAndCancel(taskPack.TimeSpan, taskPack.Token, m_pack.Cancel, out var token, out var closeAction);
 
                     Action action;
 
                     try
                     {
-                        MHttpResponse response = await MHttpResponse.ReadAsync(m_stream, taskPack.MaxResponseSize).ConfigureAwait(false);
+                        MHttpResponse response;
 
+                        try
+                        {
+                            m_pack.Add();
+
+                            response = await m_pack.ReadAsync(taskPack.MaxResponseSize).ConfigureAwait(false);
+
+                        }
+                        finally
+                        {
+                            m_pack.Sub();
+                        }
+
+                        
                         action = () => taskPack.Send(response);
                     }
                     catch(Exception e)
@@ -342,19 +476,38 @@ namespace LeiKaiFeng.Http
                         return translateFunc(await func().ConfigureAwait(false));
 
                     }
-                    catch (IOException)
+                    catch (Exception e)
                     {
-                    }
-                    catch(ObjectDisposedException)
-                    {
+                        pack.Close();
+
+                        if (e is IOException ||
+                            e is ObjectDisposedException)
+                        {
+
+                        }
+                        else
+                        {
+                            throw;
+                        }
                     }
                     
                 }
 
-                pack = await CreateNewConnectAsync(uri, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    pack = await CreateNewConnectAsync(uri, cancellationToken).ConfigureAwait(false);
 
 
-                return translateFunc(await func().ConfigureAwait(false));
+                    return translateFunc(await func().ConfigureAwait(false));
+                }
+                catch
+                {
+                    pack.Close();
+
+                    throw;
+                }
+
+                
 
             }
             catch(Exception e)

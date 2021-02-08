@@ -25,7 +25,7 @@ namespace Test
 
                     string s = await client.GetStringAsync(new Uri("https://cn.bing.com/"), CancellationToken.None);
 
-                    //Console.WriteLine(s.Length);
+                    Console.WriteLine(s.Length);
                 }
                 catch (MHttpClientException e)
                 when(e.InnerException is OperationCanceledException)
