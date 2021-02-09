@@ -94,16 +94,7 @@ namespace LeiKaiFeng.Http
                     }
                     catch (Exception e)
                     {
-                       
-
-                        if (token.IsCancellationRequested)
-                        {
-                            pack.Send(new OperationCanceledException(string.Empty, e));
-                        }
-                        else
-                        {
-                            pack.Send(e);
-                        }
+                        pack.Send(e);
                     }
                     finally
                     {
@@ -408,28 +399,11 @@ namespace LeiKaiFeng.Http
                         m_handler.MaxResponseSize,
                         request.CreateSendAsync());
 
-                while (true)
-                {
-                  
-                    try
-                    {
-                        await writer.WriteAsync(pack).ConfigureAwait(false);
+                await writer.WriteAsync(pack).ConfigureAwait(false);
 
-                        var response = await pack.Task.ConfigureAwait(false);
+                var response = await pack.Task.ConfigureAwait(false);
 
-                        return translateFunc(response);
-
-                    }
-                    catch (IOException)
-                    {
-                       
-                    }
-                    catch (ObjectDisposedException)
-                    {
-                       
-                    }
-                    
-                }
+                return translateFunc(response);
 
             }
             catch(Exception e)
