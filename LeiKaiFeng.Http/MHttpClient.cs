@@ -101,6 +101,7 @@ namespace LeiKaiFeng.Http
 
                 if (isThrow)
                 {
+                    
                     throw new ObjectDisposedException(nameof(MHttpStream));
                 }
             }
@@ -132,6 +133,8 @@ namespace LeiKaiFeng.Http
 
                 if (b)
                 {
+                    Console.WriteLine("run");
+
                     m_stream.Close();
                 }
             }
@@ -185,14 +188,14 @@ namespace LeiKaiFeng.Http
             m_count = 0;
         }
 
-        public Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Func<MHttpStreamPack, bool> setPoolFunc, TimeSpan timeSpan, CancellationToken token, int maxResponseSize)
+        public Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Action readOverAction, TimeSpan timeSpan, CancellationToken token, int maxResponseSize)
         {
-            return SendAsync(sendRequestFunc, setPoolFunc, new ResponsePack(token, timeSpan, maxResponseSize));
+            return SendAsync(sendRequestFunc, readOverAction, new ResponsePack(token, timeSpan, maxResponseSize));
         }
 
         
 
-        Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Func<MHttpStreamPack,bool> setPoolFunc, ResponsePack taskPack)
+        Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Action readOverAction, ResponsePack taskPack)
         {
             async Task func()
             {
@@ -217,10 +220,7 @@ namespace LeiKaiFeng.Http
 
 
 
-                    if (setPoolFunc(this) == false)
-                    {
-                        m_pack.Close();
-                    }
+                    readOverAction();
                 }
                 catch(Exception e)
                 {
@@ -465,16 +465,26 @@ namespace LeiKaiFeng.Http
                 MHttpStreamPack pack = default;
 
                 var requsetFunc = request.CreateSendAsync();
-                
-                Task<MHttpResponse> func() => pack.SendAsync(requsetFunc, (item) => m_pool.Set(uri, item), ResponseTimeOut, cancellationToken, m_handler.MaxResponseSize);
+
+                bool b = false;
+
+                void setPool() => b = m_pool.Set(uri, pack);
+
+                Task<MHttpResponse> func() => pack.SendAsync(requsetFunc, setPool, ResponseTimeOut, cancellationToken, m_handler.MaxResponseSize);
 
                 while (m_pool.Get(uri, out pack))
                 {
                   
                     try
                     {
-                        return translateFunc(await func().ConfigureAwait(false));
+                        var v = translateFunc(await func().ConfigureAwait(false));
 
+                        if (b == false)
+                        {
+                            pack.Close();
+                        }
+
+                        return v;
                     }
                     catch (Exception e)
                     {
@@ -498,7 +508,14 @@ namespace LeiKaiFeng.Http
                     pack = await CreateNewConnectAsync(uri, cancellationToken).ConfigureAwait(false);
 
 
-                    return translateFunc(await func().ConfigureAwait(false));
+                    var v = translateFunc(await func().ConfigureAwait(false));
+
+                    if (b == false)
+                    {
+                        pack.Close();
+                    }
+
+                    return v;
                 }
                 catch
                 {
