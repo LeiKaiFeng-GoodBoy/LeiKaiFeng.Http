@@ -92,7 +92,16 @@ namespace LeiKaiFeng.Http
                         pack.Send(response);
 
                     }
-                    catch (Exception e)
+                    catch(IOException e)
+                    when(e.InnerException is ObjectDisposedException)
+                    {
+                        pack.Send(new OperationCanceledException());
+                    }
+                    catch(ObjectDisposedException)
+                    {
+                        pack.Send(new OperationCanceledException());
+                    }
+                    catch(Exception e)
                     {
                         pack.Send(e);
                     }
@@ -122,6 +131,7 @@ namespace LeiKaiFeng.Http
                     try
                     {
                         await pack.WriteRequest(stream).ConfigureAwait(false);
+
                     }
                     catch(Exception e)
                     {
@@ -152,14 +162,7 @@ namespace LeiKaiFeng.Http
             var write_task = WriteRequestAsync(reader, channel, stream);
 
 
-            var task = Task.WhenAll(read_task, write_task);
-
-            task.ContinueWith((t) =>
-            {
-                stream.Close();
-            });
-
-            return task;
+            return Task.WhenAll(read_task, write_task);
         }
 
         static async Task AddTask(int maxStreamPoolCount, int maxRequestCount, ChannelReader<RequestAndResponsePack> reader, Func<Task<MHttpStream>> func)
@@ -195,19 +198,25 @@ namespace LeiKaiFeng.Http
 
             try
             {
-                var vs = new List<Task>();
+                SemaphoreSlim slim = new SemaphoreSlim(maxStreamPoolCount, maxStreamPoolCount);
               
                 while (true)
                 {
 
+                    await slim.WaitAsync().ConfigureAwait(false);
+
                     MHttpStream stream = await createStream().ConfigureAwait(false);
 
-                    vs.Add(AddTask2(maxRequestCount, reader, stream));
+                    Task task = Task.Run(() => AddTask2(maxRequestCount, reader, stream))
+                        .ContinueWith((t) => {
 
-                    if (vs.Count >= maxStreamPoolCount)
-                    {
-                        await Task.WhenAny(vs.ToArray()).ConfigureAwait(false);
-                    }
+                            slim.Release();
+
+                            stream.Close();
+
+
+                        });
+
                 }
 
             }
@@ -393,17 +402,35 @@ namespace LeiKaiFeng.Http
                         () => CreateNewConnectAsync(uri, cancellationToken));
 
 
-                var pack = new RequestAndResponsePack(
-                        cancellationToken,
-                        ResponseTimeOut,
-                        m_handler.MaxResponseSize,
-                        request.CreateSendAsync());
+               
 
-                await writer.WriteAsync(pack).ConfigureAwait(false);
+                while (true)
+                {
+                    try
+                    {
+                        var pack = new RequestAndResponsePack(
+                               cancellationToken,
+                               ResponseTimeOut,
+                               m_handler.MaxResponseSize,
+                               request.CreateSendAsync());
 
-                var response = await pack.Task.ConfigureAwait(false);
+                        await writer.WriteAsync(pack).ConfigureAwait(false);
 
-                return translateFunc(response);
+                        var response = await pack.Task.ConfigureAwait(false);
+
+                        return translateFunc(response);
+                    }
+                    catch (IOException)
+                    {
+
+                    }
+                    catch (ObjectDisposedException)
+                    {
+
+                    }
+
+
+                }
 
             }
             catch(Exception e)
