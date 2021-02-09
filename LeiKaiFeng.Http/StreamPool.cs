@@ -2,6 +2,7 @@
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 
 namespace LeiKaiFeng.Http
 {
@@ -71,46 +72,16 @@ namespace LeiKaiFeng.Http
             }
         }
 
-        sealed class ChannelPack
+        readonly ConcurrentDictionary<HostKey, ChannelWriter<RequestAndResponsePack>> m_pool = new ConcurrentDictionary<HostKey, ChannelWriter<RequestAndResponsePack>>();
+
+        public StreamPool()
         {
-            public ChannelPack(Channel<MHttpStreamPack> channel)
-            {
-                Read = channel;
-                Write = channel;
-            }
-
-            public ChannelReader<MHttpStreamPack> Read { get; private set; }
-
-            public ChannelWriter<MHttpStreamPack> Write { get; private set; }
-        }
-
-        readonly ConcurrentDictionary<HostKey, ChannelPack> m_pool = new ConcurrentDictionary<HostKey, ChannelPack>();
-
-        readonly Func<HostKey, ChannelPack> m_create;
-
-        public StreamPool(int maxCount)
-        {
-            m_create = (k) => new ChannelPack(Channel.CreateBounded<MHttpStreamPack>(maxCount));
         }
 
      
-        ChannelPack Find(Uri uri)
+        public ChannelWriter<RequestAndResponsePack> Find(Uri uri, int maxStreamPoolCount, int maxRequestCount, Func<Task<MHttpStream>> func)
         {
-            return m_pool.GetOrAdd(new HostKey(uri), m_create);
-        }
-
-        public bool Get(Uri uri, out MHttpStreamPack pack)
-        {
-            var channel = Find(uri);
-
-            return channel.Read.TryRead(out pack);
-        }
-
-        public bool Set(Uri uri, MHttpStreamPack pack)
-        {
-            var channel = Find(uri);
-
-            return channel.Write.TryWrite(pack);
+            return m_pool.GetOrAdd(new HostKey(uri), (k) => RequestAndResponse.Create(maxStreamPoolCount, maxRequestCount, func));
         }
     }
 }

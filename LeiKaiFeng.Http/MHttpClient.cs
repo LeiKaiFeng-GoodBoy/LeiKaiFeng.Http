@@ -4,6 +4,7 @@ using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Threading.Channels;
+using System.Collections.Generic;
 
 namespace LeiKaiFeng.Http
 {
@@ -28,282 +29,212 @@ namespace LeiKaiFeng.Http
         }
     }
 
-    sealed class MHttpStreamPack
+    sealed class RequestAndResponsePack
     {
-        sealed class ResponsePack
+        readonly TaskCompletionSource<MHttpResponse> m_source = new TaskCompletionSource<MHttpResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public RequestAndResponsePack(CancellationToken token, TimeSpan timeSpan, int maxResponseContentSize, Func<MHttpStream, Task> writeRequest)
         {
-            readonly TaskCompletionSource<MHttpResponse> m_source = new TaskCompletionSource<MHttpResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-
-            public ResponsePack(CancellationToken token, TimeSpan timeSpan, int maxResponseSize)
-            {
-                Token = token;
+            Token = token;
+          
+            TimeSpan = timeSpan;
             
-                TimeSpan = timeSpan;
-                
-                MaxResponseSize = maxResponseSize;
-            }
-
-            public CancellationToken Token { get; private set; }
-
-            public TimeSpan TimeSpan { get; private set; }
-
-            public int MaxResponseSize { get; private set; }
-
-            public Task<MHttpResponse> Task => m_source.Task;
-
-            public void Send(Exception e)
-            {
-                m_source.TrySetException(e);
-            }
-
-            public void Send(MHttpResponse response)
-            {
-                m_source.TrySetResult(response);
-            }
+            MaxResponseContentSize = maxResponseContentSize;
+            
+            WriteRequest = writeRequest;
         }
 
-        sealed class Pack
+        public CancellationToken Token { get; private set; }
+
+        public TimeSpan TimeSpan { get; private set; }
+
+        public int MaxResponseContentSize { get; private set; }
+
+        public Func<MHttpStream, Task> WriteRequest { get; set; }
+
+
+        public Task<MHttpResponse> Task => m_source.Task;
+
+
+        public void Send(Exception e)
         {
-            readonly object m_lock = new object();
+            m_source.TrySetException(e);
+        }
 
-            
-            int m_refCount = 1;
+        public void Send(MHttpResponse response)
+        {
+            m_source.TrySetResult(response);
+        }
+        
+    }
 
-            int m_is_close = 0;
+    sealed class RequestAndResponse
+    {
+        
 
-            MHttpStream m_stream;
-
-
-            public Pack(MHttpStream stream)
+        static async Task ReadResponseAsync(ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+        {
+            try
             {
-                m_stream = stream;
-            }
-
-
-            public void Add()
-            {
-                bool isThrow = false;
-
-
-                lock (m_lock)
+                while (true)
                 {
-                    if (m_refCount == 0)
+                    var pack = await reader.ReadAsync().ConfigureAwait(false);
+
+
+
+                    MHttpClient.LinkedTimeOutAndCancel(pack.TimeSpan, pack.Token, stream.Cencel, out var token, out var closeAction);
+
+                    try
                     {
-                        isThrow = true;
+                        MHttpResponse response = await MHttpResponse.ReadAsync(stream, pack.MaxResponseContentSize).ConfigureAwait(false);
+
+                        pack.Send(response);
+
                     }
-                    else
+                    catch (Exception e)
                     {
-                        m_refCount++;
+                       
 
-                        isThrow = false;
-                    }
-                }
-
-                if (isThrow)
-                {
-                    
-                    throw new ObjectDisposedException(nameof(MHttpStream));
-                }
-            }
-
-            public void Sub()
-            {
-                bool b;
-
-                lock (m_lock)
-                {
-                    if (m_refCount == 0)
-                    {
-                        b = false;
-                    }
-                    else
-                    {
-                        m_refCount--;
-
-                        if (m_refCount == 0)
+                        if (token.IsCancellationRequested)
                         {
-                            b = true;
+                            pack.Send(new OperationCanceledException(string.Empty, e));
                         }
                         else
                         {
-                            b = false;
+                            pack.Send(e);
                         }
-                    }
-                }
-
-                if (b)
-                {
-                    Console.WriteLine("run");
-
-                    m_stream.Close();
-                }
-            }
-
-            public void Close()
-            {
-                if (Interlocked.Exchange(ref m_is_close, 1) == 0)
-                {
-                    Sub();
-                }
-            }
-
-            public Task WriteAsync(Func<MHttpStream, Task> func)
-            {
-                return func(m_stream);
-            }
-
-
-            public Task<MHttpResponse> ReadAsync(int maxResponseSize)
-            {
-                return MHttpResponse.ReadAsync(m_stream, maxResponseSize);
-            }
-
-            public void Cancel()
-            {
-                m_stream.Cencel();
-            }
-
-
-
-        }
-
-        readonly ChannelReader<ResponsePack> m_channelReader;
-
-        readonly ChannelWriter<ResponsePack> m_channelWriter;
-
-        readonly Pack m_pack;
-
-        int m_count;
-
-        public MHttpStreamPack(MHttpStream stream, int maxRequestCount)
-        {
-            m_pack = new Pack(stream);
-
-            var channel = Channel.CreateBounded<ResponsePack>(maxRequestCount);
-
-            m_channelReader = channel;
-
-            m_channelWriter = channel;
-
-            m_count = 0;
-        }
-
-        public Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Action readOverAction, TimeSpan timeSpan, CancellationToken token, int maxResponseSize)
-        {
-            return SendAsync(sendRequestFunc, readOverAction, new ResponsePack(token, timeSpan, maxResponseSize));
-        }
-
-        
-
-        Task<MHttpResponse> SendAsync(Func<MHttpStream, Task> sendRequestFunc, Action readOverAction, ResponsePack taskPack)
-        {
-            async Task func()
-            {
-                try
-                {
-                    try
-                    {
-                        m_pack.Add();
-
-                        await m_pack.WriteAsync(sendRequestFunc).ConfigureAwait(false);
-
                     }
                     finally
                     {
-                        m_pack.Sub();
+                        closeAction();
                     }
-
-                   
-                    await m_channelWriter.WriteAsync(taskPack).ConfigureAwait(false);
-
-                    ReadResponse();
-
-
-
-                    readOverAction();
-                }
-                catch(Exception e)
-                {
-                    taskPack.Send(e);
-                }         
-            }
-
-
-            func();
-
-            return taskPack.Task;
-        }
-
-        public void Close()
-        {
-            m_pack.Close();
-        }
-
-        void ReadResponse()
-        {
-            if (Interlocked.Increment(ref m_count) == 1)
-            {
-                ThreadPool.QueueUserWorkItem((obj) => ReadResponseAsync());
-            }
-        }
-
-        
-
-        //这个地方的主要功能在于让读取一个一个的进行,不能并行读取
-        async Task ReadResponseAsync()
-        {
-            
-            do
-            {
-                if (!m_channelReader.TryRead(out var taskPack))
-                {
-                    throw new NotImplementedException("内部错误");
-                }
-                else
-                {
-
                     
-                    MHttpClient.LinkedTimeOutAndCancel(taskPack.TimeSpan, taskPack.Token, m_pack.Cancel, out var token, out var closeAction);
 
-                    Action action;
+                }
+            }
+            catch (ChannelClosedException)
+            {
+
+            }
+        }
+
+
+        static async Task WriteRequestAsync(ChannelReader<RequestAndResponsePack> reader, ChannelWriter<RequestAndResponsePack> writer, MHttpStream stream)
+        {
+            try
+            {
+                while (true)
+                {
+                    var pack = await reader.ReadAsync().ConfigureAwait(false);
 
                     try
                     {
-                        MHttpResponse response;
-
-                        try
-                        {
-                            m_pack.Add();
-
-                            response = await m_pack.ReadAsync(taskPack.MaxResponseSize).ConfigureAwait(false);
-
-                        }
-                        finally
-                        {
-                            m_pack.Sub();
-                        }
-
-                        
-                        action = () => taskPack.Send(response);
+                        await pack.WriteRequest(stream).ConfigureAwait(false);
                     }
                     catch(Exception e)
                     {
-                        if (token.IsCancellationRequested)
-                        {
-                            action = () => taskPack.Send(new OperationCanceledException(string.Empty, e));
-                        }
-                        else
-                        {
-                            action = () => taskPack.Send(e);
-                        }
+                        pack.Send(e);
+
+                        writer.TryComplete();
+
+                        return;
                     }
 
-                    closeAction();
-
-                    action();
+                    await writer.WriteAsync(pack).ConfigureAwait(false);
                 }
             }
-            while (Interlocked.Decrement(ref m_count) != 0);
+            catch (ChannelClosedException)
+            {
+                writer.TryComplete();
+            }
+        }
+
+
+        static Task AddTask2(int maxRequestCount, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+        {
+            var channel = Channel.CreateBounded<RequestAndResponsePack>(maxRequestCount);
+
+
+            var read_task = ReadResponseAsync(channel, stream);
+
+            var write_task = WriteRequestAsync(reader, channel, stream);
+
+
+            var task = Task.WhenAll(read_task, write_task);
+
+            task.ContinueWith((t) =>
+            {
+                stream.Close();
+            });
+
+            return task;
+        }
+
+        static async Task AddTask(int maxStreamPoolCount, int maxRequestCount, ChannelReader<RequestAndResponsePack> reader, Func<Task<MHttpStream>> func)
+        {
+            
+            async Task<MHttpStream> createStream()
+            {
+                while (true)
+                {
+                    bool b = await reader.WaitToReadAsync().ConfigureAwait(false);
+
+                    if (b == false) 
+                    {
+                        throw new ChannelClosedException();
+                    }
+
+                    Exception exception;
+                    try
+                    {
+                        return await func().ConfigureAwait(false);
+                    }
+                    catch (Exception e)
+                    {
+                        exception = e;
+                    }
+
+                    var pack = await reader.ReadAsync().ConfigureAwait(false);
+
+                    pack.Send(exception);
+
+                }
+            }
+
+            try
+            {
+                var vs = new List<Task>();
+              
+                while (true)
+                {
+
+                    MHttpStream stream = await createStream().ConfigureAwait(false);
+
+                    vs.Add(AddTask2(maxRequestCount, reader, stream));
+
+                    if (vs.Count >= maxStreamPoolCount)
+                    {
+                        await Task.WhenAny(vs.ToArray()).ConfigureAwait(false);
+                    }
+                }
+
+            }
+            catch (ChannelClosedException)
+            {
+
+            }
+
+        }
+
+        public static ChannelWriter<RequestAndResponsePack> Create(int maxStreamPoolCount, int maxRequestCount, Func<Task<MHttpStream>> func)
+        {
+            var channel = Channel.CreateBounded<RequestAndResponsePack>(maxStreamPoolCount);
+
+            Task.Run(() => AddTask(maxStreamPoolCount, maxRequestCount, channel, func));
+
+
+            return channel;
+
         }
     }
 
@@ -431,7 +362,7 @@ namespace LeiKaiFeng.Http
         {
             m_handler = handler;
 
-            m_pool = new StreamPool(handler.MaxStreamPoolCount);
+            m_pool = new StreamPool();
 
             ResponseTimeOut = NeverTimeOutTimeSpan;
 
@@ -445,13 +376,13 @@ namespace LeiKaiFeng.Http
             return await m_handler.AuthenticateCallback(new NetworkStream(socket, true), uri).ConfigureAwait(false);
         }
 
-        Task<MHttpStreamPack> CreateNewConnectAsync(Uri uri, CancellationToken cancellationToken)
+        Task<MHttpStream> CreateNewConnectAsync(Uri uri, CancellationToken cancellationToken)
         {
             Socket socket = new Socket(m_handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
             return TimeOutAndCancelAsync(
                 CreateNewConnectAsync(socket, uri),
-                (stream) => new MHttpStreamPack(new MHttpStream(socket, stream), m_handler.MaxOneStreamRequestCount),
+                (stream) => new MHttpStream(socket, stream),
                 socket.Close,
                 ConnectTimeOut,
                 cancellationToken);
@@ -462,34 +393,35 @@ namespace LeiKaiFeng.Http
         {
             try
             {
-                MHttpStreamPack pack = default;
+                
+                var writer = m_pool.Find(
+                        uri,
+                        m_handler.MaxStreamPoolCount,
+                        m_handler.MaxOneStreamRequestCount,
+                        () => CreateNewConnectAsync(uri, cancellationToken));
 
-                var requsetFunc = request.CreateSendAsync();
 
-                bool b = false;
+                var pack = new RequestAndResponsePack(
+                        cancellationToken,
+                        ResponseTimeOut,
+                        m_handler.MaxResponseSize,
+                        request.CreateSendAsync());
 
-                void setPool() => b = m_pool.Set(uri, pack);
-
-                Task<MHttpResponse> func() => pack.SendAsync(requsetFunc, setPool, ResponseTimeOut, cancellationToken, m_handler.MaxResponseSize);
-
-                while (m_pool.Get(uri, out pack))
+                while (true)
                 {
                   
                     try
                     {
-                        var v = translateFunc(await func().ConfigureAwait(false));
+                        await writer.WriteAsync(pack).ConfigureAwait(false);
 
-                        if (b == false)
-                        {
-                            pack.Close();
-                        }
+                        var response = await pack.Task.ConfigureAwait(false);
 
-                        return v;
+                        return translateFunc(response);
+
                     }
                     catch (Exception e)
                     {
-                        pack.Close();
-
+                       
                         if (e is IOException ||
                             e is ObjectDisposedException)
                         {
@@ -502,29 +434,6 @@ namespace LeiKaiFeng.Http
                     }
                     
                 }
-
-                try
-                {
-                    pack = await CreateNewConnectAsync(uri, cancellationToken).ConfigureAwait(false);
-
-
-                    var v = translateFunc(await func().ConfigureAwait(false));
-
-                    if (b == false)
-                    {
-                        pack.Close();
-                    }
-
-                    return v;
-                }
-                catch
-                {
-                    pack.Close();
-
-                    throw;
-                }
-
-                
 
             }
             catch(Exception e)
