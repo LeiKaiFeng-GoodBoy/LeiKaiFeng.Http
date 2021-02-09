@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using System.Threading;
 using System.Threading.Channels;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LeiKaiFeng.Http
 {
@@ -33,25 +34,15 @@ namespace LeiKaiFeng.Http
     {
         readonly TaskCompletionSource<MHttpResponse> m_source = new TaskCompletionSource<MHttpResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public RequestAndResponsePack(CancellationToken token, TimeSpan timeSpan, int maxResponseContentSize, Func<MHttpStream, Task> writeRequest)
+        public RequestAndResponsePack(CancellationToken token, Func<MHttpStream, Task> writeRequest)
         {
             Token = token;
-          
-            TimeSpan = timeSpan;
-            
-            MaxResponseContentSize = maxResponseContentSize;
-            
             WriteRequest = writeRequest;
         }
 
         public CancellationToken Token { get; private set; }
 
-        public TimeSpan TimeSpan { get; private set; }
-
-        public int MaxResponseContentSize { get; private set; }
-
         public Func<MHttpStream, Task> WriteRequest { get; set; }
-
 
         public Task<MHttpResponse> Task => m_source.Task;
 
@@ -68,11 +59,29 @@ namespace LeiKaiFeng.Http
         
     }
 
+
     sealed class RequestAndResponse
     {
-        
+        static async Task<Stream> CreateNewConnectAsync(MHttpClientHandler handler, Socket socket, Uri uri)
+        {
+            await handler.ConnectCallback(socket, uri).ConfigureAwait(false);
 
-        static async Task ReadResponseAsync(ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+            return await handler.AuthenticateCallback(new NetworkStream(socket, true), uri).ConfigureAwait(false);
+        }
+
+        static Task<MHttpStream> CreateNewConnectAsync(MHttpClientHandler handler, Uri uri, CancellationToken cancellationToken)
+        {
+            Socket socket = new Socket(handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
+            return MHttpClientHandler.TimeOutAndCancelAsync(
+                CreateNewConnectAsync(handler, socket, uri),
+                (stream) => new MHttpStream(socket, stream),
+                socket.Close,
+                handler.ConnectTimeOut,
+                cancellationToken);
+        }
+
+        static async Task ReadResponseAsync(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
         {
             try
             {
@@ -83,11 +92,11 @@ namespace LeiKaiFeng.Http
 
 
 
-                    MHttpClient.LinkedTimeOutAndCancel(pack.TimeSpan, pack.Token, stream.Cencel, out var token, out var closeAction);
+                    MHttpClientHandler.LinkedTimeOutAndCancel(handler.ConnectTimeOut, pack.Token, stream.Cencel, out var token, out var closeAction);
 
                     try
                     {
-                        MHttpResponse response = await MHttpResponse.ReadAsync(stream, pack.MaxResponseContentSize).ConfigureAwait(false);
+                        MHttpResponse response = await MHttpResponse.ReadAsync(stream, handler.MaxResponseContentSize).ConfigureAwait(false);
 
                         pack.Send(response);
 
@@ -120,13 +129,18 @@ namespace LeiKaiFeng.Http
         }
 
 
-        static async Task WriteRequestAsync(ChannelReader<RequestAndResponsePack> reader, ChannelWriter<RequestAndResponsePack> writer, MHttpStream stream)
+        static async Task WriteRequestAsync(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, ChannelWriter<RequestAndResponsePack> writer, MHttpStream stream)
         {
             try
             {
-                while (true)
+                foreach (var item in Enumerable.Range(0, handler.MaxStreamRequestCount))
                 {
-                    var pack = await reader.ReadAsync().ConfigureAwait(false);
+                    RequestAndResponsePack pack;
+
+                    using (var cancel = new CancellationTokenSource(handler.MaxStreamWaitTimeSpan))
+                    {
+                        pack = await reader.ReadAsync(cancel.Token).ConfigureAwait(false);
+                    }
 
                     try
                     {
@@ -137,8 +151,6 @@ namespace LeiKaiFeng.Http
                     {
                         pack.Send(e);
 
-                        writer.TryComplete();
-
                         return;
                     }
 
@@ -147,25 +159,33 @@ namespace LeiKaiFeng.Http
             }
             catch (ChannelClosedException)
             {
+                
+            }
+            catch (OperationCanceledException)
+            {
+                
+            }
+            finally
+            {
                 writer.TryComplete();
             }
         }
 
 
-        static Task AddTask2(int maxRequestCount, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+        static Task AddTask2(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
         {
-            var channel = Channel.CreateBounded<RequestAndResponsePack>(maxRequestCount);
+            var channel = Channel.CreateBounded<RequestAndResponsePack>(handler.MaxStreamParallelRequestCount);
 
 
-            var read_task = ReadResponseAsync(channel, stream);
+            var read_task = ReadResponseAsync(handler, channel, stream);
 
-            var write_task = WriteRequestAsync(reader, channel, stream);
+            var write_task = WriteRequestAsync(handler, reader, channel, stream);
 
 
             return Task.WhenAll(read_task, write_task);
         }
 
-        static async Task AddTask(int maxStreamPoolCount, int maxRequestCount, ChannelReader<RequestAndResponsePack> reader, Func<Task<MHttpStream>> func)
+        static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestAndResponsePack> reader)
         {
             
             async Task<MHttpStream> createStream()
@@ -182,7 +202,7 @@ namespace LeiKaiFeng.Http
                     Exception exception;
                     try
                     {
-                        return await func().ConfigureAwait(false);
+                        return await CreateNewConnectAsync(handler, uri, CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception e)
                     {
@@ -198,7 +218,7 @@ namespace LeiKaiFeng.Http
 
             try
             {
-                SemaphoreSlim slim = new SemaphoreSlim(maxStreamPoolCount, maxStreamPoolCount);
+                SemaphoreSlim slim = new SemaphoreSlim(handler.MaxStreamPoolCount, handler.MaxStreamPoolCount);
               
                 while (true)
                 {
@@ -207,7 +227,7 @@ namespace LeiKaiFeng.Http
 
                     MHttpStream stream = await createStream().ConfigureAwait(false);
 
-                    Task task = Task.Run(() => AddTask2(maxRequestCount, reader, stream))
+                    Task task = Task.Run(() => AddTask2(handler, reader, stream))
                         .ContinueWith((t) => {
 
                             slim.Release();
@@ -227,11 +247,11 @@ namespace LeiKaiFeng.Http
 
         }
 
-        public static ChannelWriter<RequestAndResponsePack> Create(int maxStreamPoolCount, int maxRequestCount, Func<Task<MHttpStream>> func)
+        public static ChannelWriter<RequestAndResponsePack> Create(MHttpClientHandler handler, Uri uri)
         {
-            var channel = Channel.CreateBounded<RequestAndResponsePack>(maxStreamPoolCount);
+            var channel = Channel.CreateBounded<RequestAndResponsePack>(handler.MaxStreamPoolCount);
 
-            Task.Run(() => AddTask(maxStreamPoolCount, maxRequestCount, channel, func));
+            Task.Run(() => AddTask(handler, uri, channel));
 
 
             return channel;
@@ -241,115 +261,13 @@ namespace LeiKaiFeng.Http
 
     public sealed class MHttpClient
     {
-        internal static void LinkedTimeOutAndCancel(TimeSpan timeOutSpan, CancellationToken token, Action cancelAction, out CancellationToken outToken, out Action closeAction)
-        {
-
-
-            if (timeOutSpan == MHttpClient.NeverTimeOutTimeSpan)
-            {
-                if (token == CancellationToken.None)
-                {
-                    outToken = token;
-
-                    closeAction = () => { };
-                }
-                else
-                {
-                    outToken = token;
-
-                    var register = outToken.Register(cancelAction);
-
-                    closeAction = () => register.Dispose();
-                }
-            }
-            else
-            {
-                if (token == CancellationToken.None)
-                {
-                    var source = new CancellationTokenSource(timeOutSpan);
-
-                    outToken = source.Token;
-
-                    var resgister = outToken.Register(cancelAction);
-
-                    closeAction = () =>
-                    {
-                        resgister.Dispose();
-
-                        source.Dispose();
-                    };
-                }
-                else
-                {
-                    var source = new CancellationTokenSource(timeOutSpan);
-
-
-                    var register_0 = token.Register(source.Cancel);
-
-                    outToken = source.Token;
-
-                    var register_1 = outToken.Register(cancelAction);
-
-                    closeAction = () =>
-                    {
-                        register_1.Dispose();
-
-                        register_0.Dispose();
-
-                        source.Dispose();
-                    };
-
-                }
-            }
-        }
-
-        public static Task<TR> TimeOutAndCancelAsync<T, TR>(Task<T> task, Func<T, TR> translateFunc, Action cancelAction,TimeSpan timeOutSpan, CancellationToken token)
-        {
-            LinkedTimeOutAndCancel(timeOutSpan, token, cancelAction, out var outToken, out var closeAction);
-            
-            async Task<TR> func()
-            {
-                T v;
-                try
-                {
-                    v = await task.ConfigureAwait(false);     
-                }
-                catch(Exception e)
-                {
-                    if (outToken.IsCancellationRequested)
-                    {
-                        throw new OperationCanceledException(string.Empty, e);
-                    }
-                    else
-                    {
-                        throw;
-                    }
-                }
-                finally
-                {
-                    closeAction();
-                }
-
-                return translateFunc(v);
-            }
-
-
-            return func();
-        }
-
-
-
-        public static TimeSpan NeverTimeOutTimeSpan => TimeSpan.FromMilliseconds(-1);
-
+      
 
 
         readonly StreamPool m_pool;
 
         readonly MHttpClientHandler m_handler;
 
-        public TimeSpan ConnectTimeOut { get; set; }
-
-        public TimeSpan ResponseTimeOut { get; set; }
 
         
 
@@ -365,41 +283,19 @@ namespace LeiKaiFeng.Http
 
             m_pool = new StreamPool();
 
-            ResponseTimeOut = NeverTimeOutTimeSpan;
-
-            ConnectTimeOut = NeverTimeOutTimeSpan;
+            
         }
 
-        async Task<Stream> CreateNewConnectAsync(Socket socket, Uri uri)
+        
+
+
+        async Task<T> Internal_SendAsync<T>(Uri uri, MHttpRequest request, CancellationToken token, Func<MHttpResponse, T> translateFunc)
         {
-            await m_handler.ConnectCallback(socket, uri).ConfigureAwait(false);
-
-            return await m_handler.AuthenticateCallback(new NetworkStream(socket, true), uri).ConfigureAwait(false);
-        }
-
-        Task<MHttpStream> CreateNewConnectAsync(Uri uri, CancellationToken cancellationToken)
-        {
-            Socket socket = new Socket(m_handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-
-            return TimeOutAndCancelAsync(
-                CreateNewConnectAsync(socket, uri),
-                (stream) => new MHttpStream(socket, stream),
-                socket.Close,
-                ConnectTimeOut,
-                cancellationToken);
-        }
-
-
-        async Task<T> Internal_SendAsync<T>(Uri uri, MHttpRequest request, CancellationToken cancellationToken, Func<MHttpResponse, T> translateFunc)
-        {
+            
             try
             {
-                
-                var writer = m_pool.Find(
-                        uri,
-                        m_handler.MaxStreamPoolCount,
-                        m_handler.MaxOneStreamRequestCount,
-                        () => CreateNewConnectAsync(uri, cancellationToken));
+
+                var writer = m_pool.Find(m_handler, uri);
 
 
                
@@ -408,11 +304,7 @@ namespace LeiKaiFeng.Http
                 {
                     try
                     {
-                        var pack = new RequestAndResponsePack(
-                               cancellationToken,
-                               ResponseTimeOut,
-                               m_handler.MaxResponseSize,
-                               request.CreateSendAsync());
+                        var pack = new RequestAndResponsePack(token, request.CreateSendAsync());
 
                         await writer.WriteAsync(pack).ConfigureAwait(false);
 

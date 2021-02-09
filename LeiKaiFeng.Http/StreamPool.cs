@@ -79,9 +79,9 @@ namespace LeiKaiFeng.Http
         }
 
      
-        public ChannelWriter<RequestAndResponsePack> Find(Uri uri, int maxStreamPoolCount, int maxRequestCount, Func<Task<MHttpStream>> func)
+        public ChannelWriter<RequestAndResponsePack> Find(MHttpClientHandler handler, Uri uri)
         {
-            return m_pool.GetOrAdd(new HostKey(uri), (k) => RequestAndResponse.Create(maxStreamPoolCount, maxRequestCount, func));
+            return m_pool.GetOrAdd(new HostKey(uri), (k) => RequestAndResponse.Create(handler, uri));
         }
     }
 }
