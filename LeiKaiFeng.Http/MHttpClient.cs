@@ -76,6 +76,7 @@ namespace LeiKaiFeng.Http
         {
             try
             {
+                //需要read端出现异常,task清空后才会推出
                 while (true)
                 {
                     var pack = await reader.ReadAsync().ConfigureAwait(false);
@@ -419,18 +420,13 @@ namespace LeiKaiFeng.Http
                         return translateFunc(response);
 
                     }
-                    catch (Exception e)
+                    catch (IOException)
                     {
                        
-                        if (e is IOException ||
-                            e is ObjectDisposedException)
-                        {
-
-                        }
-                        else
-                        {
-                            throw;
-                        }
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                       
                     }
                     
                 }

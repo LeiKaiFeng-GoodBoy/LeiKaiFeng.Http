@@ -25,12 +25,11 @@ namespace Test
 
                     string s = await client.GetStringAsync(new Uri("https://cn.bing.com/"), CancellationToken.None);
 
-                    Console.WriteLine(s.Length);
                 }
                 catch (MHttpClientException e)
                 when(e.InnerException is OperationCanceledException)
                 {
-
+                    Console.WriteLine("out");
                 }
 
                 
@@ -44,9 +43,9 @@ namespace Test
 
             MHttpClient client = new MHttpClient();
 
-            client.ConnectTimeOut = new TimeSpan(0, 0, 6);
+            client.ConnectTimeOut = new TimeSpan(0, 0, 1);
 
-            client.ResponseTimeOut = new TimeSpan(0, 0, 2);
+            client.ResponseTimeOut = new TimeSpan(0, 0, 1);
 
             var list = new List<Task>();
 
