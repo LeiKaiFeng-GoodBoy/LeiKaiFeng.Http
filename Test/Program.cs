@@ -14,7 +14,7 @@ namespace Test
         static async Task TestString(MHttpClient client)
         {
            
-            foreach (var item in Enumerable.Range(1, 1000))
+            foreach (var item in Enumerable.Range(1, 3))
             {
 
                 try
@@ -23,8 +23,8 @@ namespace Test
 
                     //Regex regex = new Regex(@"<a class=""directlink (?:largeimg|smallimg)"" href=""([^""]+)""");
 
-                    string s = await client.GetStringAsync(new Uri("http://127.0.0.1/"), CancellationToken.None);
-
+                    string s = await client.GetStringAsync(new Uri("https://cn.bing.com/"), CancellationToken.None);
+                    Console.WriteLine(s.Length);
                 }
                 catch (MHttpClientException e)
                 when(e.InnerException is OperationCanceledException)
@@ -45,11 +45,11 @@ namespace Test
 
             client.ConnectTimeOut = new TimeSpan(0, 0, 1);
 
-            client.ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 10);
+            client.ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 250);
 
             var list = new List<Task>();
 
-            foreach (var item in Enumerable.Range(0, 1000)) 
+            foreach (var item in Enumerable.Range(0, 256)) 
             {
                 list.Add(TestString(client));
             }
