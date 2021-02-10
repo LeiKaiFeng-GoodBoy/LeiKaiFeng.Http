@@ -190,13 +190,6 @@ namespace LeiKaiFeng.Http
             {
                 while (true)
                 {
-                    bool b = await reader.WaitToReadAsync().ConfigureAwait(false);
-
-                    if (b == false) 
-                    {
-                        throw new ChannelClosedException();
-                    }
-
                     Exception exception;
                     try
                     {
