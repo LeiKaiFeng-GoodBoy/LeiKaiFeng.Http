@@ -71,7 +71,7 @@ namespace LeiKaiFeng.Http
             }
         }
 
-        public static Task<TR> TimeOutAndCancelAsync<T, TR>(Task<T> task, Func<T, TR> translateFunc, Action cancelAction, TimeSpan timeOutSpan, CancellationToken token)
+        public static Task<TR> TimeOutAndCancelAsync<T, TR>(Task<T> task, Func<T, TR> translateFunc, Action cancelAction, Func<Exception, bool> isCancelFunc, TimeSpan timeOutSpan, CancellationToken token)
         {
             LinkedTimeOutAndCancel(timeOutSpan, token, cancelAction, out var outToken, out var closeAction);
 
@@ -84,7 +84,7 @@ namespace LeiKaiFeng.Http
                 }
                 catch (Exception e)
                 {
-                    if (outToken.IsCancellationRequested)
+                    if (isCancelFunc(e))
                     {
                         throw new OperationCanceledException(string.Empty, e);
                     }

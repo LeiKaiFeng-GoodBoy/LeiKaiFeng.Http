@@ -74,10 +74,12 @@ namespace LeiKaiFeng.Http
         {
             Socket socket = new Socket(handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
 
+
             return MHttpClientHandler.TimeOutAndCancelAsync(
                 CreateNewConnectAsync(handler, socket, uri),
                 (stream) => new MHttpStream(socket, stream),
                 socket.Close,
+                (e) => e is ObjectDisposedException,
                 handler.ConnectTimeOut,
                 cancellationToken);
         }
@@ -174,13 +176,9 @@ namespace LeiKaiFeng.Http
         {
             var channel = Channel.CreateBounded<RequestPack>(handler.MaxStreamParallelRequestCount);
 
-
-            var read_task = ReadResponseAsync(handler, channel, stream);
-
-            var write_task = WriteRequestAsync(handler, reader, channel, stream);
-
-
-            return Task.WhenAll(read_task, write_task);
+            return Task.WhenAll(
+                Task.Run(() => ReadResponseAsync(handler, channel, stream)),
+                Task.Run(() => WriteRequestAsync(handler, reader, channel, stream)));
         }
 
         static async Task AddTask1(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader, SemaphoreSlim slim)
