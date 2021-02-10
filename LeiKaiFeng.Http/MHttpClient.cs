@@ -63,26 +63,7 @@ namespace LeiKaiFeng.Http
 
     sealed class MHttpStreamPack
     {
-        static async Task<Stream> CreateNewConnectAsync(MHttpClientHandler handler, Socket socket, Uri uri)
-        {
-            await handler.ConnectCallback(socket, uri).ConfigureAwait(false);
-
-            return await handler.AuthenticateCallback(new NetworkStream(socket, true), uri).ConfigureAwait(false);
-        }
-
-        static Task<MHttpStream> CreateNewConnectAsync(MHttpClientHandler handler, Uri uri, CancellationToken cancellationToken)
-        {
-            Socket socket = new Socket(handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-
-
-            return MHttpClientHandler.TimeOutAndCancelAsync(
-                CreateNewConnectAsync(handler, socket, uri),
-                (stream) => new MHttpStream(socket, stream),
-                socket.Close,
-                (e) => e is ObjectDisposedException,
-                handler.ConnectTimeOut,
-                cancellationToken);
-        }
+        
 
         static async Task ReadResponseAsync(MHttpClientHandler handler, ChannelReader<RequestPack> reader, MHttpStream stream)
         {
@@ -190,7 +171,7 @@ namespace LeiKaiFeng.Http
                     Exception exception;
                     try
                     {
-                        return await CreateNewConnectAsync(handler, uri, CancellationToken.None).ConfigureAwait(false);
+                        return await handler.StreamCallback(uri, handler, CancellationToken.None).ConfigureAwait(false);
                     }
                     catch (Exception e)
                     {

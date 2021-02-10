@@ -106,7 +106,30 @@ namespace LeiKaiFeng.Http
         }
 
 
+        
 
+        public static Func<Uri, MHttpClientHandler, CancellationToken, Task<MHttpStream>> CreateNewConnectAsync(Func<Socket, Uri, Task> connectFunc, Func<NetworkStream, Uri, Task<Stream>> authenticateFunc)
+        {
+            return (uri, handler, token) =>
+            {
+                Socket socket = new Socket(handler.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+
+                async Task<Stream> func()
+                {
+                    await connectFunc(socket, uri).ConfigureAwait(false);
+
+                    return await authenticateFunc(new NetworkStream(socket, true), uri).ConfigureAwait(false);
+                }
+
+                return MHttpClientHandler.TimeOutAndCancelAsync(
+                    func(),
+                    (stream) => new MHttpStream(socket, stream),
+                    socket.Close,
+                    (e) => e is ObjectDisposedException,
+                    handler.ConnectTimeOut,
+                    token);
+            };
+        }
 
 
         public static Func<Stream, Uri, Task<Stream>> CreateCreateAuthenticateAsyncFunc(string host)
@@ -133,11 +156,7 @@ namespace LeiKaiFeng.Http
 
         public static TimeSpan NeverTimeOutTimeSpan => TimeSpan.FromMilliseconds(-1);
 
-
-
-        public Func<Socket, Uri, Task> ConnectCallback { get; set; }
-
-        public Func<Stream, Uri, Task<Stream>> AuthenticateCallback { get; set; }
+        public Func<Uri, MHttpClientHandler, CancellationToken, Task<MHttpStream>> StreamCallback { get; set; }
 
         public AddressFamily AddressFamily { get; set; }
 
@@ -169,9 +188,7 @@ namespace LeiKaiFeng.Http
 
             AddressFamily = AddressFamily.InterNetwork;
 
-            ConnectCallback = CreateConnectAsync;
-
-            AuthenticateCallback = CreateAuthenticateAsync;
+            StreamCallback = CreateNewConnectAsync(CreateConnectAsync, CreateAuthenticateAsync);
 
             ResponseTimeOut = NeverTimeOutTimeSpan;
 

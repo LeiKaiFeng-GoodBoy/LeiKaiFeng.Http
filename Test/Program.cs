@@ -53,7 +53,7 @@ namespace Test
 
                 ConnectTimeOut = new TimeSpan(0, 0, 1),
 
-                ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 150),
+                ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 250),
             });
 
             var list = new List<Task>();
