@@ -183,9 +183,8 @@ namespace LeiKaiFeng.Http
             return Task.WhenAll(read_task, write_task);
         }
 
-        static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader)
+        static async Task AddTask1(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader, SemaphoreSlim slim)
         {
-            
             async Task<MHttpStream> createStream()
             {
                 while (true)
@@ -209,33 +208,48 @@ namespace LeiKaiFeng.Http
 
             try
             {
-                SemaphoreSlim slim = new SemaphoreSlim(handler.MaxStreamPoolCount, handler.MaxStreamPoolCount);
-              
-                while (true)
+                MHttpStream stream;
+
+                try
                 {
-
-                    await slim.WaitAsync().ConfigureAwait(false);
-
-                    MHttpStream stream = await createStream().ConfigureAwait(false);
-
-                    Task task = Task.Run(() => AddTask2(handler, reader, stream))
-                        .ContinueWith((t) => {
-
-                            slim.Release();
-
-                            stream.Close();
-
-
-                        });
+                    stream = await createStream().ConfigureAwait(false);
 
                 }
+                catch (ChannelClosedException)
+                {
+                    return;
+                }
 
+                try
+                {
+
+                    await AddTask2(handler, reader, stream).ConfigureAwait(false);
+                }
+                finally
+                {
+                    stream.Close();
+                }
             }
-            catch (ChannelClosedException)
+            finally
+            {
+                slim.Release();
+            }
+
+            
+
+        }
+
+        static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader)
+        {
+            SemaphoreSlim slim = new SemaphoreSlim(handler.MaxStreamPoolCount, handler.MaxStreamPoolCount);
+
+            while (true)
             {
 
-            }
+                await slim.WaitAsync().ConfigureAwait(false);
 
+                Task task = Task.Run(() => AddTask1(handler, uri, reader, slim));
+            }
         }
 
         public static ChannelWriter<RequestPack> Create(MHttpClientHandler handler, Uri uri)
