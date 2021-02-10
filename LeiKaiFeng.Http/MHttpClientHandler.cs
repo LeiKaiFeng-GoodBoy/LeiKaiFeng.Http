@@ -80,7 +80,14 @@ namespace LeiKaiFeng.Http
                 T v;
                 try
                 {
-                    v = await task.ConfigureAwait(false);
+                    try
+                    {
+                        v = await task.ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        closeAction();
+                    }     
                 }
                 catch (Exception e)
                 {
@@ -92,10 +99,6 @@ namespace LeiKaiFeng.Http
                     {
                         throw;
                     }
-                }
-                finally
-                {
-                    closeAction();
                 }
 
                 return translateFunc(v);
@@ -121,11 +124,24 @@ namespace LeiKaiFeng.Http
                     return await authenticateFunc(new NetworkStream(socket, true), uri).ConfigureAwait(false);
                 }
 
+                bool isCancel(Exception e)
+                {
+                    if (e is ObjectDisposedException ||
+                        (e is IOException && e.InnerException is ObjectDisposedException))
+                    {
+                        return true;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                }
+
                 return MHttpClientHandler.TimeOutAndCancelAsync(
                     func(),
                     (stream) => new MHttpStream(socket, stream),
                     socket.Close,
-                    (e) => e is ObjectDisposedException,
+                    isCancel,
                     handler.ConnectTimeOut,
                     token);
             };

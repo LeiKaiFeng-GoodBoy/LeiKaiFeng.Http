@@ -84,8 +84,16 @@ namespace LeiKaiFeng.Http
                 MHttpClientHandler.LinkedTimeOutAndCancel(handler.ResponseTimeOut, pack.Token, stream.Cencel, out var token, out var closeAction);
                 try
                 {
-                    MHttpResponse response = await MHttpResponse.ReadAsync(stream, handler.MaxResponseContentSize).ConfigureAwait(false);
-
+                    MHttpResponse response;
+                    try
+                    {
+                        response = await MHttpResponse.ReadAsync(stream, handler.MaxResponseContentSize).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        closeAction();
+                    }
+                    
                     pack.Send(response);
 
                 }
@@ -101,10 +109,6 @@ namespace LeiKaiFeng.Http
                 catch (Exception e)
                 {
                     pack.Send(e);
-                }
-                finally
-                {
-                    closeAction();
                 }
             }
         }
@@ -155,7 +159,14 @@ namespace LeiKaiFeng.Http
 
         static Task AddTask2(MHttpClientHandler handler, ChannelReader<RequestPack> reader, MHttpStream stream)
         {
-            var channel = Channel.CreateBounded<RequestPack>(handler.MaxStreamParallelRequestCount);
+            var options = new BoundedChannelOptions(handler.MaxStreamParallelRequestCount)
+            {
+                SingleReader = true,
+
+                SingleWriter = true
+            };
+
+            var channel = Channel.CreateBounded<RequestPack>(options);
 
             return Task.WhenAll(
                 Task.Run(() => ReadResponseAsync(handler, channel, stream)),
@@ -213,9 +224,6 @@ namespace LeiKaiFeng.Http
             {
                 slim.Release();
             }
-
-            
-
         }
 
         static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader)
@@ -233,7 +241,15 @@ namespace LeiKaiFeng.Http
 
         public static ChannelWriter<RequestPack> Create(MHttpClientHandler handler, Uri uri)
         {
-            var channel = Channel.CreateBounded<RequestPack>(handler.MaxStreamPoolCount);
+            var options = new BoundedChannelOptions(handler.MaxStreamPoolCount)
+            {
+
+                AllowSynchronousContinuations = true,
+
+                SingleWriter = true
+            };
+
+            var channel = Channel.CreateBounded<RequestPack>(options);
 
             Task.Run(() => AddTask(handler, uri, channel));
 
