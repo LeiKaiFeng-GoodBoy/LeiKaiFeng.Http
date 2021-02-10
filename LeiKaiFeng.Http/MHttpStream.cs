@@ -101,7 +101,7 @@ namespace LeiKaiFeng.Http
             }
         }
 
-        ValueTask Inner_ReadAsync(Func<bool> func)
+        ValueTask<VoidType> Inner_ReadAsync(Func<bool> func)
         {
 
             if (func())
@@ -110,7 +110,7 @@ namespace LeiKaiFeng.Http
             }
             else
             {
-                return new ValueTask(Inner_ReadAsync_Core((out VoidType v) => func()).AsTask());
+                return Inner_ReadAsync_Core((out VoidType v) => func());
             }
         }
 
@@ -212,7 +212,7 @@ namespace LeiKaiFeng.Http
         }
 
 
-        ValueTask CopyChunkedAsync(MemoryStream stream, int size)
+        ValueTask<VoidType> CopyChunkedAsync(MemoryStream stream, int size)
         {
             size = checked(size + s_mark.Length);
 
