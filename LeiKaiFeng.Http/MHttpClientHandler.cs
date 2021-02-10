@@ -129,14 +129,15 @@ namespace LeiKaiFeng.Http
             return (socket, uri) => Task.Run(() => socket.Connect(host, port));
         }
 
-        public Func<Socket, Uri, Task> ConnectCallback { get; set; }
-
-        public Func<Stream, Uri, Task<Stream>> AuthenticateCallback { get; set; }
-
 
 
         public static TimeSpan NeverTimeOutTimeSpan => TimeSpan.FromMilliseconds(-1);
 
+
+
+        public Func<Socket, Uri, Task> ConnectCallback { get; set; }
+
+        public Func<Stream, Uri, Task<Stream>> AuthenticateCallback { get; set; }
 
         public AddressFamily AddressFamily { get; set; }
 

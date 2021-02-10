@@ -37,12 +37,13 @@ namespace LeiKaiFeng.Http
         public RequestAndResponsePack(CancellationToken token, Func<MHttpStream, Task> writeRequest)
         {
             Token = token;
+       
             WriteRequest = writeRequest;
         }
 
         public CancellationToken Token { get; private set; }
 
-        public Func<MHttpStream, Task> WriteRequest { get; set; }
+        public Func<MHttpStream, Task> WriteRequest { get; private set; }
 
         public Task<MHttpResponse> Task => m_source.Task;
 
@@ -83,48 +84,45 @@ namespace LeiKaiFeng.Http
 
         static async Task ReadResponseAsync(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
         {
-            try
+            //需要read端出现异常,task清空后才会推出
+            while (true)
             {
-                //需要read端出现异常,task清空后才会推出
-                while (true)
+                RequestAndResponsePack pack;
+
+                try
                 {
-                    var pack = await reader.ReadAsync().ConfigureAwait(false);
+                    pack = await reader.ReadAsync().ConfigureAwait(false);
+                }
+                catch (ChannelClosedException)
+                {
+                    return;
+                }
 
+                MHttpClientHandler.LinkedTimeOutAndCancel(handler.ResponseTimeOut, pack.Token, stream.Cencel, out var token, out var closeAction);
+                try
+                {
+                    MHttpResponse response = await MHttpResponse.ReadAsync(stream, handler.MaxResponseContentSize).ConfigureAwait(false);
 
-
-                    MHttpClientHandler.LinkedTimeOutAndCancel(handler.ConnectTimeOut, pack.Token, stream.Cencel, out var token, out var closeAction);
-
-                    try
-                    {
-                        MHttpResponse response = await MHttpResponse.ReadAsync(stream, handler.MaxResponseContentSize).ConfigureAwait(false);
-
-                        pack.Send(response);
-
-                    }
-                    catch(IOException e)
-                    when(e.InnerException is ObjectDisposedException)
-                    {
-                        pack.Send(new OperationCanceledException());
-                    }
-                    catch(ObjectDisposedException)
-                    {
-                        pack.Send(new OperationCanceledException());
-                    }
-                    catch(Exception e)
-                    {
-                        pack.Send(e);
-                    }
-                    finally
-                    {
-                        closeAction();
-                    }
-                    
+                    pack.Send(response);
 
                 }
-            }
-            catch (ChannelClosedException)
-            {
-
+                catch (IOException e)
+                when (e.InnerException is ObjectDisposedException)
+                {
+                    pack.Send(new OperationCanceledException());
+                }
+                catch (ObjectDisposedException)
+                {
+                    pack.Send(new OperationCanceledException());
+                }
+                catch (Exception e)
+                {
+                    pack.Send(e);
+                }
+                finally
+                {
+                    closeAction();
+                }
             }
         }
 
@@ -294,36 +292,33 @@ namespace LeiKaiFeng.Http
             
             try
             {
-
                 var writer = m_pool.Find(m_handler, uri);
 
-
-               
+                var requestFunc = request.CreateSendAsync();
 
                 while (true)
                 {
+                    var pack = new RequestAndResponsePack(token, requestFunc);
+
+                    await writer.WriteAsync(pack).ConfigureAwait(false);
+
+                    MHttpResponse response;
+
                     try
                     {
-                        var pack = new RequestAndResponsePack(token, request.CreateSendAsync());
-
-                        await writer.WriteAsync(pack).ConfigureAwait(false);
-
-                        var response = await pack.Task.ConfigureAwait(false);
-
-                        return translateFunc(response);
+                        response = await pack.Task.ConfigureAwait(false);
                     }
                     catch (IOException)
                     {
-
+                        continue;
                     }
                     catch (ObjectDisposedException)
                     {
-
+                        continue;
                     }
 
-
+                    return translateFunc(response);
                 }
-
             }
             catch(Exception e)
             {

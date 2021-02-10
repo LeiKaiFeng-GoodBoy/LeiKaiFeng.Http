@@ -41,11 +41,20 @@ namespace Test
         {
             //AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
 
-            MHttpClient client = new MHttpClient();
+            MHttpClient client = new MHttpClient(new MHttpClientHandler
+            {
+                MaxStreamParallelRequestCount = 2,
 
-            client.ConnectTimeOut = new TimeSpan(0, 0, 1);
+                MaxStreamPoolCount = 12,
 
-            client.ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 250);
+                MaxStreamRequestCount = 4,
+
+
+
+                ConnectTimeOut = new TimeSpan(0, 0, 1),
+
+                ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 150),
+            });
 
             var list = new List<Task>();
 
