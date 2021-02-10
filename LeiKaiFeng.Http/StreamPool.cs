@@ -72,16 +72,16 @@ namespace LeiKaiFeng.Http
             }
         }
 
-        readonly ConcurrentDictionary<HostKey, ChannelWriter<RequestAndResponsePack>> m_pool = new ConcurrentDictionary<HostKey, ChannelWriter<RequestAndResponsePack>>();
+        readonly ConcurrentDictionary<HostKey, ChannelWriter<RequestPack>> m_pool = new ConcurrentDictionary<HostKey, ChannelWriter<RequestPack>>();
 
         public StreamPool()
         {
         }
 
      
-        public ChannelWriter<RequestAndResponsePack> Find(MHttpClientHandler handler, Uri uri)
+        public ChannelWriter<RequestPack> Find(MHttpClientHandler handler, Uri uri)
         {
-            return m_pool.GetOrAdd(new HostKey(uri), (k) => RequestAndResponse.Create(handler, uri));
+            return m_pool.GetOrAdd(new HostKey(uri), (k) => MHttpStreamPack.Create(handler, uri));
         }
     }
 }

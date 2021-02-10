@@ -30,11 +30,11 @@ namespace LeiKaiFeng.Http
         }
     }
 
-    sealed class RequestAndResponsePack
+    sealed class RequestPack
     {
         readonly TaskCompletionSource<MHttpResponse> m_source = new TaskCompletionSource<MHttpResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        public RequestAndResponsePack(CancellationToken token, Func<MHttpStream, Task> writeRequest)
+        public RequestPack(CancellationToken token, Func<MHttpStream, Task> writeRequest)
         {
             Token = token;
        
@@ -61,7 +61,7 @@ namespace LeiKaiFeng.Http
     }
 
 
-    sealed class RequestAndResponse
+    sealed class MHttpStreamPack
     {
         static async Task<Stream> CreateNewConnectAsync(MHttpClientHandler handler, Socket socket, Uri uri)
         {
@@ -82,12 +82,12 @@ namespace LeiKaiFeng.Http
                 cancellationToken);
         }
 
-        static async Task ReadResponseAsync(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+        static async Task ReadResponseAsync(MHttpClientHandler handler, ChannelReader<RequestPack> reader, MHttpStream stream)
         {
             //需要read端出现异常,task清空后才会推出
             while (true)
             {
-                RequestAndResponsePack pack;
+                RequestPack pack;
 
                 try
                 {
@@ -127,13 +127,13 @@ namespace LeiKaiFeng.Http
         }
 
 
-        static async Task WriteRequestAsync(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, ChannelWriter<RequestAndResponsePack> writer, MHttpStream stream)
+        static async Task WriteRequestAsync(MHttpClientHandler handler, ChannelReader<RequestPack> reader, ChannelWriter<RequestPack> writer, MHttpStream stream)
         {
             try
             {
                 foreach (var item in Enumerable.Range(0, handler.MaxStreamRequestCount))
                 {
-                    RequestAndResponsePack pack;
+                    RequestPack pack;
 
                     using (var cancel = new CancellationTokenSource(handler.MaxStreamWaitTimeSpan))
                     {
@@ -170,9 +170,9 @@ namespace LeiKaiFeng.Http
         }
 
 
-        static Task AddTask2(MHttpClientHandler handler, ChannelReader<RequestAndResponsePack> reader, MHttpStream stream)
+        static Task AddTask2(MHttpClientHandler handler, ChannelReader<RequestPack> reader, MHttpStream stream)
         {
-            var channel = Channel.CreateBounded<RequestAndResponsePack>(handler.MaxStreamParallelRequestCount);
+            var channel = Channel.CreateBounded<RequestPack>(handler.MaxStreamParallelRequestCount);
 
 
             var read_task = ReadResponseAsync(handler, channel, stream);
@@ -183,7 +183,7 @@ namespace LeiKaiFeng.Http
             return Task.WhenAll(read_task, write_task);
         }
 
-        static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestAndResponsePack> reader)
+        static async Task AddTask(MHttpClientHandler handler, Uri uri, ChannelReader<RequestPack> reader)
         {
             
             async Task<MHttpStream> createStream()
@@ -245,9 +245,9 @@ namespace LeiKaiFeng.Http
 
         }
 
-        public static ChannelWriter<RequestAndResponsePack> Create(MHttpClientHandler handler, Uri uri)
+        public static ChannelWriter<RequestPack> Create(MHttpClientHandler handler, Uri uri)
         {
-            var channel = Channel.CreateBounded<RequestAndResponsePack>(handler.MaxStreamPoolCount);
+            var channel = Channel.CreateBounded<RequestPack>(handler.MaxStreamPoolCount);
 
             Task.Run(() => AddTask(handler, uri, channel));
 
@@ -298,7 +298,7 @@ namespace LeiKaiFeng.Http
 
                 while (true)
                 {
-                    var pack = new RequestAndResponsePack(token, requestFunc);
+                    var pack = new RequestPack(token, requestFunc);
 
                     await writer.WriteAsync(pack).ConfigureAwait(false);
 
