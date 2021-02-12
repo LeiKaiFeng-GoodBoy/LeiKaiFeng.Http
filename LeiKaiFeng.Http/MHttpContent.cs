@@ -102,35 +102,32 @@ namespace LeiKaiFeng.Http
             }
         }
 
-        Task SetIdentity(object obj)
+        void SetIdentity(object obj)
         {
             m_content = obj;
 
-            return Task.CompletedTask;
         }
 
-        Task SetDeflate(object obj)
+        void SetDeflate(object obj)
         {
             Stream stream = CreateStream(obj);
 
            
             m_content = DecompressStream(new DeflateStream(stream, CompressionMode.Decompress));
 
-            return Task.CompletedTask;
         }
 
 
-        Task SetGZip(object obj)
+        void SetGZip(object obj)
         {
             Stream stream = CreateStream(obj);
 
 
             m_content = DecompressStream(new GZipStream(stream, CompressionMode.Decompress));
 
-            return Task.CompletedTask;
         }
 
-        Func<object, Task> CreateSetFunc(MHttpHeaders headers)
+        Action<object> CreateSetFunc(MHttpHeaders headers)
         {
 
 
@@ -160,20 +157,20 @@ namespace LeiKaiFeng.Http
         }
 
 
-        internal Task ReadAsync(MHttpStream stream, MHttpHeaders headers, int maxContentLength)
+        internal Func<ReadParameter, ReadResult<T>> ReadAsync<T>(MHttpStream stream, MHttpHeaders headers, T value, int maxContentLength)
         {
 
             if (headers.IsChunked())
             {
-                return stream.ReadChunkedContentAsync(maxContentLength, CreateSetFunc(headers));
+                return stream.ReadChunkedContentAsync(value, CreateSetFunc(headers), maxContentLength);
             }
             else if (headers.TryGetContentLength(out int length))
             {
-                return stream.ReadByteArrayContentAsync(length, maxContentLength, CreateSetFunc(headers));
+                return stream.ReadByteArrayAsync(value, CreateSetFunc(headers), length, maxContentLength);
             }
             else
             {
-                return stream.ReadByteArrayContentAsync(maxContentLength, CreateSetFunc(headers));
+                throw new MHttpStreamException("无法识别长度的响应内容");
             }
         }
 

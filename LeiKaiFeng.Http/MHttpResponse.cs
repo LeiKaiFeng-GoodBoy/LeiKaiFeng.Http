@@ -26,18 +26,24 @@ namespace LeiKaiFeng.Http
             return new MHttpResponse(status, new MHttpHeaders());
         }
 
-        Task ReadContentAsync(MHttpStream stream, int maxContentSize)
+        Func<ReadParameter, ReadResult<MHttpResponse>> ReadContentAsync(MHttpStream stream, int maxContentSize)
         {
-            return Content.ReadAsync(stream, Headers, maxContentSize);
+            return Content.ReadAsync(stream, Headers, this, maxContentSize);
         }
 
-        public static async Task<MHttpResponse> ReadAsync(MHttpStream stream, int maxContentSize)
+        public static ValueTask<MHttpResponse> ReadAsync(MHttpStream stream, int maxContentSize)
         {
-            MHttpResponse response = await stream.ReadHeadersAsync(CreateMHttpResponse).ConfigureAwait(false);
 
-            await response.ReadContentAsync(stream, maxContentSize).ConfigureAwait(false);
+            Func<ReadParameter, ReadResult<MHttpResponse>> func = MHttpStream.ReadHttpHeaders(ReadResultStatus.Used_NotResult, (buffer) =>
+            {
+                var response = MHttpResponse.CreateMHttpResponse(buffer);
 
-            return response;
+                func = response.ReadContentAsync(stream, maxContentSize);
+
+                return response;
+            });
+
+            return stream.ReadAsync((parameter) => func(parameter));
         }
 
         static int ParseResponseStatus(string firstLine)
@@ -47,7 +53,7 @@ namespace LeiKaiFeng.Http
             return int.Parse(ss[1]);
         }
 
-        static MHttpResponse CreateMHttpResponse(ArraySegment<byte> buffer)
+        internal static MHttpResponse CreateMHttpResponse(ArraySegment<byte> buffer)
         {
 
             var firstDic = MHttpStream.ParseLine(buffer);

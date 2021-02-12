@@ -14,7 +14,7 @@ namespace Test
         static async Task TestString(MHttpClient client)
         {
            
-            foreach (var item in Enumerable.Range(1, 3))
+            foreach (var item in Enumerable.Range(1, 27))
             {
 
                 try
@@ -39,26 +39,26 @@ namespace Test
 
         static async Task Main(string[] args)
         {
-            //AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
+            AppDomain.CurrentDomain.FirstChanceException += CurrentDomain_FirstChanceException;
 
             MHttpClient client = new MHttpClient(new MHttpClientHandler
             {
-                MaxStreamParallelRequestCount = 2,
+                MaxStreamParallelRequestCount = 12,
 
                 MaxStreamPoolCount = 12,
 
-                MaxStreamRequestCount = 4,
+                MaxStreamRequestCount = 12,
 
 
 
                 ConnectTimeOut = new TimeSpan(0, 0, 1),
 
-                ResponseTimeOut = new TimeSpan(0, 0, 0, 0, 250),
+                ResponseTimeOut = new TimeSpan(0, 0, 10),
             });
 
             var list = new List<Task>();
 
-            foreach (var item in Enumerable.Range(0, 256)) 
+            foreach (var item in Enumerable.Range(0, 2)) 
             {
                 list.Add(TestString(client));
             }
@@ -80,7 +80,8 @@ namespace Test
 
         private static void CurrentDomain_FirstChanceException(object sender, System.Runtime.ExceptionServices.FirstChanceExceptionEventArgs e)
         {
-            Console.WriteLine(e.Exception);
+            string s = Environment.NewLine;
+            Console.WriteLine($"{e.Exception.Message}{s}{s}");
         }
     }
 }

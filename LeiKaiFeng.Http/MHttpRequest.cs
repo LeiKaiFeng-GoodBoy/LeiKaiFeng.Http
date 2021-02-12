@@ -65,11 +65,11 @@ namespace LeiKaiFeng.Http
 
         
 
-        Task ReadContentAsync(MHttpStream stream, int maxContentSize)
+        void ReadContentAsync(MHttpStream stream, int maxContentSize)
         {
             if (Method.Equals("GET", StringComparison.OrdinalIgnoreCase))
             {
-                return Task.CompletedTask;
+                
             }
             else
             {
@@ -78,13 +78,18 @@ namespace LeiKaiFeng.Http
         }
 
         
-        public static async Task<MHttpRequest> ReadAsync(MHttpStream stream, int maxContentSize)
+        public static ValueTask<MHttpRequest> ReadAsync(MHttpStream stream, int maxContentSize)
         {
-            MHttpRequest request = await stream.ReadHeadersAsync(CreateMHttpRequest).ConfigureAwait(false);
+            Func<ReadParameter, ReadResult<MHttpRequest>> func = MHttpStream.ReadHttpHeaders(ReadResultStatus.Used_Result, (buffer) =>
+            {
+                var request = MHttpRequest.CreateMHttpRequest(buffer);
 
-            await request.ReadContentAsync(stream, maxContentSize).ConfigureAwait(false);
+                request.ReadContentAsync(stream, maxContentSize);
 
-            return request;
+                return request;
+            });
+
+            return stream.ReadAsync(func);
         }
 
         byte[] AndHeadersContent()
