@@ -233,6 +233,13 @@ namespace LeiKaiFeng.Http
             while (true)
             {
 
+                bool isHaveItem = await reader.WaitToReadAsync().ConfigureAwait(false);
+
+                if (isHaveItem == false)
+                {
+                    return;
+                }
+
                 await slim.WaitAsync().ConfigureAwait(false);
 
                 Task task = Task.Run(() => AddTask1(handler, uri, reader, slim));

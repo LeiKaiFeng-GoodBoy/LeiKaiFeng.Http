@@ -148,11 +148,22 @@ namespace LeiKaiFeng.Http
         }
 
 
-        public static Func<Stream, Uri, Task<Stream>> CreateCreateAuthenticateAsyncFunc(string host)
+        public static Func<Stream, Uri, Task<Stream>> CreateCreateAuthenticateAsyncFunc(string host, bool isCheckCertificate)
         {
+            Func<Stream, SslStream> createSslStream;
+
+            if (isCheckCertificate)
+            {
+                createSslStream = (stream) => new SslStream(stream, false);
+            }
+            else
+            {
+                createSslStream = (stream) => new SslStream(stream, false, (a, b, c, d) => true);
+            }
+
             return async (stream, uri) =>
             {
-                SslStream sslStream = new SslStream(stream, false);
+                SslStream sslStream = createSslStream(stream);
 
                 await sslStream.AuthenticateAsClientAsync(host).ConfigureAwait(false);
 
