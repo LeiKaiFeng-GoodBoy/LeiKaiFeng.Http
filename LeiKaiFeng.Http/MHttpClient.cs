@@ -30,7 +30,7 @@ namespace LeiKaiFeng.Http
         }
     }
 
-    sealed class RequestPack
+    public sealed class RequestPack
     {
         readonly TaskCompletionSource<MHttpResponse> m_source = new TaskCompletionSource<MHttpResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
 
@@ -61,7 +61,7 @@ namespace LeiKaiFeng.Http
     }
 
 
-    sealed class MHttpStreamPack
+    public sealed class MHttpStreamPack
     {
         
 
