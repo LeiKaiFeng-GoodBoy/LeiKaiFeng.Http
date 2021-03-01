@@ -11,6 +11,15 @@ namespace LeiKaiFeng.Http
 {
 
     [Serializable]
+    public sealed class MHttpNotImplementedException : Exception
+    {
+        public MHttpNotImplementedException(string message) : base(message)
+        {
+
+        }
+    }
+
+    [Serializable]
     public sealed class MHttpStreamException : Exception
     {
 
@@ -96,10 +105,7 @@ namespace LeiKaiFeng.Http
 
     public sealed partial class MHttpStream
     {
-        
-        const int SIZE = 8192;
-
-        const int MAX_SIZE = 65536;
+        const int MAX_SIZE_65536 = 65536;
 
         readonly Socket m_socket;
 
@@ -117,13 +123,18 @@ namespace LeiKaiFeng.Http
 
         int CanUsedSize => m_read_offset - m_used_offset;
 
-        public MHttpStream(Socket socket, Stream stream)
+        public MHttpStream(Socket socket, Stream stream) : this(socket, stream, MAX_SIZE_65536)
+        {
+
+        }
+
+        public MHttpStream(Socket socket, Stream stream, int maxSize)
         {
             m_socket = socket;
 
             m_stream = stream;
 
-            m_buffer = new byte[MAX_SIZE];
+            m_buffer = new byte[maxSize];
 
             m_read_offset = 0;
 
@@ -136,12 +147,11 @@ namespace LeiKaiFeng.Http
         {
             int used_size = CanUsedSize;
 
-            if (used_size >= SIZE)
+            if (used_size == m_buffer.Length)
             {
                 throw new MHttpStreamException("无法在有限的缓冲区中找到协议的边界，请增大缓冲区重试");
             }
-
-            if (m_used_offset >= SIZE)
+            else
             {
                 Buffer.BlockCopy(m_buffer, m_used_offset, m_buffer, 0, used_size);
 

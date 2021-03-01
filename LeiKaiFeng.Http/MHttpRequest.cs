@@ -121,11 +121,23 @@ namespace LeiKaiFeng.Http
             return (stream) => stream.WriteAsync(buffer);
         }
 
-        public async Task SendAsync(MHttpStream stream)
+        async Task SendAllAsync(MHttpStream stream)
         {
             await SendHeadersAsync(stream).ConfigureAwait(false);
 
             await Content.SendAsync(stream).ConfigureAwait(false);
+        }
+
+        public Task SendAsync(MHttpStream stream)
+        {
+            if (Content.IsEmptyContent())
+            {
+                return SendHeadersAsync(stream);
+            }
+            else
+            {
+                return SendAllAsync(stream);
+            }
         }
     }
 }

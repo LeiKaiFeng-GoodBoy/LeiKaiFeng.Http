@@ -369,22 +369,32 @@ namespace LeiKaiFeng.Http
             
         }
 
-        public Task<byte[]> GetByteArrayAsync(Uri uri, Uri referer, CancellationToken cancellationToken)
+        Task<T> GetRefererAsync<T>(Uri uri, Uri referer, CancellationToken token, Func<MHttpResponse, T> func)
         {
-
             MHttpRequest request = MHttpRequest.CreateGet(uri);
 
             request.Headers.Set("Referer", referer.AbsoluteUri);
 
-            return Internal_SendAsync(uri, request, cancellationToken, (response) =>
+            return Internal_SendAsync(uri, request, token, (response) =>
             {
 
 
 
                 ChuckResponseStatus(response);
 
-                return response.Content.GetByteArray();
+                return func(response);
             });
+        }
+
+        public Task<Stream> GetStreamAsync(Uri uri, Uri referer, CancellationToken token)
+        {
+            return GetRefererAsync(uri, referer, token, (res) => res.Content.GetStream());
+        }
+
+        public Task<byte[]> GetByteArrayAsync(Uri uri, Uri referer, CancellationToken token)
+        {
+            return GetRefererAsync(uri, referer, token, (res) => res.Content.GetByteArray());
+            
 
         }
 

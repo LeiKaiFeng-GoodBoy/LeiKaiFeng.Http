@@ -16,7 +16,35 @@ namespace LeiKaiFeng.Http
             m_content = Array.Empty<byte>();
         }
 
+        public bool IsEmptyContent()
+        {
+            if(m_content is MemoryStream stream)
+            {
+                if (stream.Length == 0)
+                {
+                   
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+            else
+            {
+                var buffer = (byte[])m_content;
 
+
+                if (buffer.Length == 0)
+                {
+                    return true;
+                }
+                else
+                {
+                    return false;
+                }
+            }
+        }
 
 
         public Stream GetStream()
@@ -170,7 +198,7 @@ namespace LeiKaiFeng.Http
             }
             else
             {
-                throw new MHttpStreamException("无法识别长度的响应内容");
+                throw new MHttpNotImplementedException("没有明确长度的分支未实现");
             }
         }
 
