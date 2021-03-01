@@ -67,7 +67,8 @@ namespace LeiKaiFeng.Http
 
         void ReadContentAsync(MHttpStream stream, int maxContentSize)
         {
-            if (Method.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            if (Method.Equals("GET", StringComparison.OrdinalIgnoreCase) ||
+                Method.Equals("CONNECT", StringComparison.OrdinalIgnoreCase))
             {
                 
             }
