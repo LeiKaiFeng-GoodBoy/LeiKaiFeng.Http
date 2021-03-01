@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Threading;
 using System.Buffers.Text;
+using System.Runtime.InteropServices;
 
 namespace LeiKaiFeng.Http
 {
@@ -105,6 +106,90 @@ namespace LeiKaiFeng.Http
 
     public sealed partial class MHttpStream
     {
+        sealed class StreamWarp
+        {
+            public StreamWarp()
+            {
+                Read = CreateDelete(nameof(Stream.ReadAsync), Memory<byte>.Empty, CancellationToken.None, new ValueTask<int>());
+
+                if (Read is null)
+                {
+                   
+                    Read = (stream, memory, token) =>
+                    {
+
+                        if (MemoryMarshal.TryGetArray(memory, out ArraySegment<byte> array))
+                        {
+                            var task = stream.ReadAsync(array.Array, array.Offset, array.Count, token);
+
+                            return new ValueTask<int>(task);
+                        }
+                        else
+                        {
+                            throw new NotImplementedException();
+                        }
+
+                            
+                    };
+                }
+                
+
+                Write = CreateDelete(nameof(Stream.WriteAsync), ReadOnlyMemory<byte>.Empty, CancellationToken.None, new ValueTask());
+
+                if (Write is null)
+                {
+                    
+                    Write = (stream, memory, token) =>
+                    {
+                        if (MemoryMarshal.TryGetArray(memory, out ArraySegment<byte> array))
+                        {
+                            var task = stream.WriteAsync(array.Array, array.Offset, array.Count, token);
+
+                            return new ValueTask(task);
+                        }
+                        else
+                        {
+                            throw new NotImplementedException();
+                        }
+
+                            
+                    };
+                }
+                
+            }
+
+            public Func<Stream, Memory<byte>, CancellationToken, ValueTask<int>> Read { get; }
+
+            public Func<Stream, ReadOnlyMemory<byte>, CancellationToken, ValueTask> Write { get; }
+
+
+
+            static Func<Stream, T1, T2, T3> CreateDelete<T1, T2, T3>(string name, T1 t1, T2 t2, T3 t3)
+            {
+                var method = typeof(Stream).GetMethod(name, new Type[] { typeof(T1), typeof(T2) });
+
+                TN F<TN>()
+                {
+                    return (TN)(object)Delegate.CreateDelegate(typeof(TN), method, false);
+                }
+
+                if (method is null)
+                {
+                    return null;
+                }
+                else
+                {
+                    return F<Func<Stream, T1, T2, T3>>();
+                }
+                
+            }
+
+        }
+
+        static readonly StreamWarp s_streamWarp = new StreamWarp();
+
+       
+       
         const int MAX_SIZE_65536 = 65536;
 
         readonly Socket m_socket;
@@ -205,7 +290,7 @@ namespace LeiKaiFeng.Http
             {
                 Move();
 
-                int n = await m_stream.ReadAsync(m_buffer, m_read_offset, CanReadSize).ConfigureAwait(false);
+                int n = await s_streamWarp.Read(m_stream, m_buffer.AsMemory(m_read_offset, CanReadSize), default).ConfigureAwait(false);
 
                 if (n <= 0)
                 {
@@ -440,7 +525,7 @@ namespace LeiKaiFeng.Http
 
         internal Task WriteAsync(byte[] buffer, int offset, int count)
         {
-            return m_stream.WriteAsync(buffer, offset, count);
+            return s_streamWarp.Write(m_stream, buffer.AsMemory(offset, count), default).AsTask();
         }
 
         public void Close()
